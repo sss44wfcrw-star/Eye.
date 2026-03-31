@@ -12,29 +12,30 @@ st.title("🧿 PARAKLETOS — Integrated Physics System")
 col1, col2 = st.columns(2)
 
 with col1:
-    mass_strength = st.slider("Mass Strength", 0.1, 5.0, 1.5)
-    dt = st.slider("Time Step (dt)", 0.001, 0.1, 0.03)
+    mass_strength = st.slider("Mass Strength", 0.1, 10.0, 2.0)
+    dt = st.slider("Time Step", 0.001, 0.1, 0.02)
 
 with col2:
     steps = st.slider("Steps", 100, 2000, 500)
-    num_particles = st.slider("Particles", 50, 300, 150)
+    N = st.slider("Particles", 50, 400, 200)
 
 orbit_mode = st.toggle("Orbit Mode")
 black_hole_mode = st.toggle("Black Hole Mode")
 ai_stabilizer = st.toggle("AI Stabilizer")
+toroid_mode = st.toggle("Toroidal Field Mode")
+galaxy_mode = st.toggle("Galaxy Mode")
 
-rs = st.slider("Event Horizon (Black Hole Radius)", 0.05, 1.0, 0.2)
+rs = st.slider("Event Horizon Radius", 0.05, 1.0, 0.2)
 
 # =========================
-# PHYSICS ENGINE
+# ENGINE
 # =========================
-class PhysicsEngine:
+class Engine:
     def __init__(self, G=1.0):
         self.G = G
 
-    def gravity_multi(self, pos, masses):
+    def gravity(self, pos, masses):
         acc = np.zeros_like(pos)
-
         for i in range(len(pos)):
             for j in range(len(pos)):
                 if i == j:
@@ -42,40 +43,69 @@ class PhysicsEngine:
                 r_vec = pos[j] - pos[i]
                 r = np.linalg.norm(r_vec) + 1e-5
                 acc[i] += self.G * masses[j] * r_vec / (r**3)
-
         return acc
 
-    def black_hole_effect(self, pos, velocities, rs):
+    def black_hole(self, pos, vel, rs):
         for i in range(len(pos)):
-            r = np.linalg.norm(pos[i])
-            if r < rs:
-                velocities[i] *= 0.2
-        return velocities
+            if np.linalg.norm(pos[i]) < rs:
+                vel[i] *= 0.1
+        return vel
 
+engine = Engine()
 
 # =========================
-# INITIALIZE SYSTEM
+# INITIAL CONDITIONS
 # =========================
-engine = PhysicsEngine()
-
-pos = np.random.randn(num_particles, 3)
-vel = np.random.randn(num_particles, 3) * 0.1
-masses = np.ones(num_particles) * mass_strength
+pos = np.random.randn(N, 3)
+vel = np.random.randn(N, 3) * 0.1
+masses = np.ones(N) * mass_strength
 
 # ORBIT MODE
 if orbit_mode:
-    pos[0] = np.array([0, 0, 0])
-    masses[0] = 50.0
+    pos[0] = np.array([0,0,0])
+    masses[0] = 80.0
 
-    for i in range(1, num_particles):
+    for i in range(1, N):
         r = np.linalg.norm(pos[i])
-        speed = np.sqrt(engine.G * masses[0] / (r + 1e-5))
-
-        direction = np.cross(pos[i], [0, 0, 1])
-        direction = direction / (np.linalg.norm(direction) + 1e-5)
-
+        speed = np.sqrt(engine.G * masses[0] / (r+1e-5))
+        direction = np.cross(pos[i], [0,0,1])
+        direction /= (np.linalg.norm(direction)+1e-5)
         vel[i] = direction * speed
 
+# GALAXY MODE
+if galaxy_mode:
+    for i in range(N):
+        angle = np.random.uniform(0, 2*np.pi)
+        radius = np.random.uniform(0.5, 3.0)
+
+        pos[i] = np.array([
+            radius * np.cos(angle),
+            radius * np.sin(angle),
+            np.random.normal(0, 0.1)
+        ])
+
+        vel[i] = np.array([
+            -np.sin(angle),
+            np.cos(angle),
+            0
+        ]) * 0.5
+
+# =========================
+# TOROID PROJECTION
+# =========================
+def project_torus(pos, R=2.0, r=1.0):
+    new_pos = []
+    for p in pos:
+        u = np.arctan2(p[1], p[0])
+        v = np.arctan2(p[2], np.sqrt(p[0]**2 + p[1]**2) - R)
+
+        x = (R + r*np.cos(v))*np.cos(u)
+        y = (R + r*np.cos(v))*np.sin(u)
+        z = r*np.sin(v)
+
+        new_pos.append([x,y,z])
+
+    return np.array(new_pos)
 
 # =========================
 # SIMULATION
@@ -83,17 +113,22 @@ if orbit_mode:
 energy_log = []
 entropy_log = []
 
-placeholder = st.empty()
+plot = st.empty()
 
 for step in range(steps):
-    acc = engine.gravity_multi(pos, masses)
+
+    acc = engine.gravity(pos, masses)
 
     vel += acc * dt
     pos += vel * dt
 
     if black_hole_mode:
-        vel = engine.black_hole_effect(pos, vel, rs)
+        vel = engine.black_hole(pos, vel, rs)
 
+    if toroid_mode:
+        pos = project_torus(pos)
+
+    # ENERGY / ENTROPY
     energy = 0.5 * np.sum(vel**2, axis=1)
     entropy = energy
 
@@ -104,32 +139,30 @@ for step in range(steps):
     # AI STABILIZER
     # =========================
     if ai_stabilizer and len(energy_log) > 50:
-        energy_std = np.std(energy_log[-50:])
-
-        if energy_std > 1.5:
-            mass_strength *= 0.97
+        std = np.std(energy_log[-50:])
+        if std > 2.0:
+            mass_strength *= 0.95
             dt *= 0.95
-        elif energy_std < 0.2:
-            mass_strength *= 1.02
+        elif std < 0.2:
+            mass_strength *= 1.05
 
     # =========================
-    # LIVE VISUAL
+    # LIVE RENDER
     # =========================
     if step % 5 == 0:
-        fig = plt.figure(figsize=(6, 6))
+        fig = plt.figure(figsize=(6,6))
         ax = fig.add_subplot(projection='3d')
 
-        ax.scatter(pos[:, 0], pos[:, 1], pos[:, 2], s=5)
+        ax.scatter(pos[:,0], pos[:,1], pos[:,2], s=6)
 
-        ax.set_xlim(-5, 5)
-        ax.set_ylim(-5, 5)
-        ax.set_zlim(-5, 5)
+        ax.set_xlim(-5,5)
+        ax.set_ylim(-5,5)
+        ax.set_zlim(-5,5)
 
         ax.set_title(f"Step {step}")
 
-        placeholder.pyplot(fig)
+        plot.pyplot(fig)
         plt.close(fig)
-
 
 # =========================
 # METRICS
