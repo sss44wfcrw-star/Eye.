@@ -2,152 +2,148 @@ import streamlit as st
 import numpy as np
 import matplotlib.pyplot as plt
 
+st.set_page_config(page_title="PARAKLETOS", layout="wide")
+
 st.title("🧿 PARAKLETOS — Integrated Physics System")
 
-# -----------------------
+# =========================
 # CONTROLS
-# -----------------------
-R = st.slider("R", 0.5, 2.0, 1.0)
-r = st.slider("r", 1.0, 3.0, 1.5)
-dt = st.slider("dt", 0.01, 0.1, 0.03)
-steps = st.slider("Steps", 100, 2000, 500)
+# =========================
+col1, col2 = st.columns(2)
 
-mass_strength = st.slider("Mass Strength", 0.0, 5.0, 1.5)
-entropy_scale = st.slider("Entropy Sensitivity", 0.1, 3.0, 1.0)
+with col1:
+    mass_strength = st.slider("Mass Strength", 0.1, 5.0, 1.5)
+    dt = st.slider("Time Step (dt)", 0.001, 0.1, 0.03)
 
-invert = st.toggle("Invert Field")
-auto_stabilize = st.toggle("AI Stabilizer")
+with col2:
+    steps = st.slider("Steps", 100, 2000, 500)
+    num_particles = st.slider("Particles", 50, 300, 150)
 
-# -----------------------
-# GEOMETRY
-# -----------------------
-def xyz(u,v):
-    x = (R + r*np.cos(v))*np.cos(u)
-    y = (R + r*np.cos(v))*np.sin(u)
-    z = r*np.sin(v)
-    return x,y,z
+orbit_mode = st.toggle("Orbit Mode")
+black_hole_mode = st.toggle("Black Hole Mode")
+ai_stabilizer = st.toggle("AI Stabilizer")
 
-def metric(u,v):
-    return (R + r*np.cos(v)), r
+rs = st.slider("Event Horizon (Black Hole Radius)", 0.05, 1.0, 0.2)
 
-# -----------------------
-# POTENTIAL (GRAVITY-LIKE)
-# -----------------------
-def grad_potential(x,y,z):
-    r_mag = np.sqrt(x**2 + y**2 + z**2) + 1e-5
-    return (mass_strength * x / r_mag**3,
-            mass_strength * y / r_mag**3,
-            mass_strength * z / r_mag**3)
+# =========================
+# PHYSICS ENGINE
+# =========================
+class PhysicsEngine:
+    def __init__(self, G=1.0):
+        self.G = G
 
-# -----------------------
-# BASE FLOW
-# -----------------------
-def flow(u,v):
-    hu,hv = metric(u,v)
+    def gravity_multi(self, pos, masses):
+        acc = np.zeros_like(pos)
 
-    dpsi_du = np.cos(u)*np.cos(v)
-    dpsi_dv = -np.sin(u)*np.sin(v)
+        for i in range(len(pos)):
+            for j in range(len(pos)):
+                if i == j:
+                    continue
+                r_vec = pos[j] - pos[i]
+                r = np.linalg.norm(r_vec) + 1e-5
+                acc[i] += self.G * masses[j] * r_vec / (r**3)
 
-    Fu = (1/hu)*dpsi_dv
-    Fv = -(1/hv)*dpsi_du
+        return acc
 
-    return Fu,Fv
+    def black_hole_effect(self, pos, velocities, rs):
+        for i in range(len(pos)):
+            r = np.linalg.norm(pos[i])
+            if r < rs:
+                velocities[i] *= 0.2
+        return velocities
 
-# -----------------------
-# STEP
-# -----------------------
-def step(u,v):
-    x,y,z = xyz(u,v)
 
-    Fu,Fv = flow(u,v)
+# =========================
+# INITIALIZE SYSTEM
+# =========================
+engine = PhysicsEngine()
 
-    gx,gy,gz = grad_potential(x,y,z)
+pos = np.random.randn(num_particles, 3)
+vel = np.random.randn(num_particles, 3) * 0.1
+masses = np.ones(num_particles) * mass_strength
 
-    Fu += gx * 0.1
-    Fv += gy * 0.1
+# ORBIT MODE
+if orbit_mode:
+    pos[0] = np.array([0, 0, 0])
+    masses[0] = 50.0
 
-    if invert:
-        Fu, Fv = -Fu, -Fv
+    for i in range(1, num_particles):
+        r = np.linalg.norm(pos[i])
+        speed = np.sqrt(engine.G * masses[0] / (r + 1e-5))
 
-    u = (u + dt*Fu) % (2*np.pi)
-    v = (v + dt*Fv) % (2*np.pi)
+        direction = np.cross(pos[i], [0, 0, 1])
+        direction = direction / (np.linalg.norm(direction) + 1e-5)
 
-    return u,v, Fu, Fv
+        vel[i] = direction * speed
 
-# -----------------------
-# INIT
-# -----------------------
-N = 400
-u = np.random.rand(N)*2*np.pi
-v = np.random.rand(N)*2*np.pi
 
+# =========================
+# SIMULATION
+# =========================
 energy_log = []
 entropy_log = []
 
-# -----------------------
-# SIMULATION
-# -----------------------
-for _ in range(steps):
-    u,v, fu, fv = step(u,v)
+placeholder = st.empty()
 
-    energy = np.sqrt(fu**2 + fv**2)
-    entropy = energy  # proxy
+for step in range(steps):
+    acc = engine.gravity_multi(pos, masses)
+
+    vel += acc * dt
+    pos += vel * dt
+
+    if black_hole_mode:
+        vel = engine.black_hole_effect(pos, vel, rs)
+
+    energy = 0.5 * np.sum(vel**2, axis=1)
+    entropy = energy
 
     energy_log.append(np.mean(energy))
     entropy_log.append(np.mean(entropy))
 
-# -----------------------
-# AI STABILIZER
-# -----------------------
-energy_std = np.std(energy_log)
-entropy_std = np.std(entropy_log)
+    # =========================
+    # AI STABILIZER
+    # =========================
+    if ai_stabilizer and len(energy_log) > 50:
+        energy_std = np.std(energy_log[-50:])
 
-if auto_stabilize:
-    if energy_std > 0.5:
-        mass_strength *= 0.9
-    if entropy_std > 0.5:
-        entropy_scale *= 0.9
+        if energy_std > 1.5:
+            mass_strength *= 0.97
+            dt *= 0.95
+        elif energy_std < 0.2:
+            mass_strength *= 1.02
 
-# -----------------------
-# FINAL POSITIONS
-# -----------------------
-x,y,z = xyz(u,v)
+    # =========================
+    # LIVE VISUAL
+    # =========================
+    if step % 5 == 0:
+        fig = plt.figure(figsize=(6, 6))
+        ax = fig.add_subplot(projection='3d')
 
-# -----------------------
-# VISUAL
-# -----------------------
-fig = plt.figure(figsize=(6,6))
-ax = fig.add_subplot(projection='3d')
+        ax.scatter(pos[:, 0], pos[:, 1], pos[:, 2], s=5)
 
-res=80
-U = np.linspace(0,2*np.pi,res)
-V = np.linspace(0,2*np.pi,res)
-U,V = np.meshgrid(U,V)
-X,Y,Z = xyz(U,V)
+        ax.set_xlim(-5, 5)
+        ax.set_ylim(-5, 5)
+        ax.set_zlim(-5, 5)
 
-ax.plot_surface(X,Y,Z,alpha=0.1)
+        ax.set_title(f"Step {step}")
 
-color_field = np.sqrt(fu**2 + fv**2) * entropy_scale
+        placeholder.pyplot(fig)
+        plt.close(fig)
 
-sc = ax.scatter(x,y,z,c=color_field,cmap='inferno',s=8)
 
-ax.set_box_aspect([1,1,1])
-fig.colorbar(sc, label="Energy / Entropy")
-
-st.pyplot(fig)
-
-# -----------------------
+# =========================
 # METRICS
-# -----------------------
+# =========================
 st.subheader("System Metrics")
 
-st.write("Mean Energy:", float(np.mean(energy_log)))
-st.write("Energy Stability:", float(energy_std))
+col1, col2 = st.columns(2)
 
-st.write("Mean Entropy:", float(np.mean(entropy_log)))
-st.write("Entropy Stability:", float(entropy_std))
+with col1:
+    st.metric("Mean Energy", f"{np.mean(energy_log):.4f}")
+    st.metric("Energy Stability", f"{np.std(energy_log):.4f}")
 
-if auto_stabilize:
-    st.success("AI Stabilizer: ACTIVE")
-else:
-    st.info("AI Stabilizer: OFF")
+with col2:
+    st.metric("Mean Entropy", f"{np.mean(entropy_log):.4f}")
+    st.metric("Entropy Stability", f"{np.std(entropy_log):.4f}")
+
+st.write(f"AI Stabilizer: {'ON' if ai_stabilizer else 'OFF'}")
