@@ -2,7 +2,7 @@ import streamlit as st
 import numpy as np
 import matplotlib.pyplot as plt
 
-st.title("🧿 PARAKLETOS — Physics System")
+st.title("🧿 PARAKLETOS — Physics Engine")
 
 # -----------------------
 # CONTROLS
@@ -11,7 +11,11 @@ R = st.slider("R", 0.5, 2.0, 1.0)
 r = st.slider("r", 1.0, 3.0, 1.5)
 dt = st.slider("dt", 0.01, 0.1, 0.03)
 steps = st.slider("Steps", 100, 2000, 500)
-invert = st.toggle("Invert Field (F → -F)")
+
+mass_strength = st.slider("Mass Strength", 0.0, 5.0, 1.5)
+entropy_scale = st.slider("Entropy Sensitivity", 0.1, 3.0, 1.0)
+
+invert = st.toggle("Invert Field")
 
 # -----------------------
 # GEOMETRY
@@ -26,34 +30,54 @@ def metric(u,v):
     return (R + r*np.cos(v)), r
 
 # -----------------------
-# FIELD
+# POTENTIAL FIELD (GRAVITY-LIKE)
+# -----------------------
+def potential(x,y,z):
+    r = np.sqrt(x**2 + y**2 + z**2) + 1e-5
+    return -mass_strength / r
+
+def grad_potential(x,y,z):
+    r = np.sqrt(x**2 + y**2 + z**2) + 1e-5
+    return (mass_strength * x / r**3,
+            mass_strength * y / r**3,
+            mass_strength * z / r**3)
+
+# -----------------------
+# BASE FLOW
 # -----------------------
 def flow(u,v):
     hu,hv = metric(u,v)
+
     dpsi_du = np.cos(u)*np.cos(v)
     dpsi_dv = -np.sin(u)*np.sin(v)
+
     Fu = (1/hu)*dpsi_dv
     Fv = -(1/hv)*dpsi_du
-
-    if invert:
-        Fu, Fv = -Fu, -Fv
 
     return Fu,Fv
 
 # -----------------------
-# STEP (MIDPOINT)
+# STEP
 # -----------------------
 def step(u,v):
-    fu1,fv1 = flow(u,v)
-    u_mid = (u + 0.5*dt*fu1) % (2*np.pi)
-    v_mid = (v + 0.5*dt*fv1) % (2*np.pi)
+    x,y,z = xyz(u,v)
 
-    fu2,fv2 = flow(u_mid,v_mid)
+    Fu,Fv = flow(u,v)
 
-    u = (u + dt*fu2) % (2*np.pi)
-    v = (v + dt*fv2) % (2*np.pi)
+    # ADD GRAVITY EFFECT
+    gx,gy,gz = grad_potential(x,y,z)
 
-    return u,v, fu2, fv2
+    # PROJECT GRADIENT INTO PARAM SPACE (approx)
+    Fu += gx * 0.1
+    Fv += gy * 0.1
+
+    if invert:
+        Fu, Fv = -Fu, -Fv
+
+    u = (u + dt*Fu) % (2*np.pi)
+    v = (v + dt*Fv) % (2*np.pi)
+
+    return u,v, Fu, Fv
 
 # -----------------------
 # INIT
@@ -62,7 +86,7 @@ N = 400
 u = np.random.rand(N)*2*np.pi
 v = np.random.rand(N)*2*np.pi
 
-energy_log = []
+entropy_log = []
 
 # -----------------------
 # SIMULATION
@@ -70,9 +94,9 @@ energy_log = []
 for _ in range(steps):
     u,v, fu, fv = step(u,v)
 
-    # ENERGY (velocity magnitude)
-    energy = np.sqrt(fu**2 + fv**2)
-    energy_log.append(np.mean(energy))
+    # ENTROPY (gradient magnitude)
+    entropy = np.sqrt(fu**2 + fv**2)
+    entropy_log.append(np.mean(entropy))
 
 # -----------------------
 # FINAL POSITIONS
@@ -80,7 +104,7 @@ for _ in range(steps):
 x,y,z = xyz(u,v)
 
 # -----------------------
-# PLOT
+# VISUAL
 # -----------------------
 fig = plt.figure(figsize=(6,6))
 ax = fig.add_subplot(projection='3d')
@@ -94,24 +118,24 @@ X,Y,Z = xyz(U,V)
 
 ax.plot_surface(X,Y,Z,alpha=0.1)
 
-# ENERGY COLOR
-energy = np.sqrt(fu**2 + fv**2)
-sc = ax.scatter(x,y,z,c=energy,cmap='plasma',s=8)
+# COLOR BY ENTROPY
+entropy = np.sqrt(fu**2 + fv**2) * entropy_scale
+sc = ax.scatter(x,y,z,c=entropy,cmap='inferno',s=8)
 
 ax.set_box_aspect([1,1,1])
-fig.colorbar(sc, label="Energy")
+fig.colorbar(sc, label="Entropy")
 
 st.pyplot(fig)
 
 # -----------------------
 # METRICS
 # -----------------------
-st.subheader("System Metrics")
+st.subheader("Physics Metrics")
 
-st.write("Average Energy:", float(np.mean(energy)))
-st.write("Energy Stability (std):", float(np.std(energy_log)))
+st.write("Mean Entropy:", float(np.mean(entropy)))
+st.write("Entropy Stability:", float(np.std(entropy_log)))
 
-if invert:
-    st.write("Field Mode: Inverted")
+if mass_strength > 0:
+    st.write("Gravity Field: ACTIVE")
 else:
-    st.write("Field Mode: Normal")
+    st.write("Gravity Field: OFF")
